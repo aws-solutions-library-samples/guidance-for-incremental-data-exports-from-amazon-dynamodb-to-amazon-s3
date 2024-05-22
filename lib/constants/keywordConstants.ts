@@ -4,6 +4,7 @@ export class KeywordConstants {
     static NULL_STRING = 'NULL';
 
     static ENABLED = 'ENABLED';
+    static DISABLED = 'DISABLED';
     static COMPLETED = 'COMPLETED';
     static FAILED = 'FAILED';
 
