@@ -17,6 +17,7 @@ import { ExportViewType } from "./constants/exportViewType";
 import { Configuration } from './configuration';
 import { IncrementalExportDefaults } from './constants/incrementalExportDefaults';
 import { WorkflowState } from './constants/WorkflowState';
+import { WorkflowAction } from './constants/WorkflowAction';
 
 export class NodeBuilder {
 
@@ -31,6 +32,7 @@ export class NodeBuilder {
     private fullExportTimeParameterName: string;
     private lastIncrementalExportTimeParameterName: string;
     private workflowStateParameterName: string;
+    private workflowActionParameterName: string;
 
     private incrementalExportWindowSizeInMinutes: number;
     private waitTimeToCheckExportStatusInSeconds: number;
@@ -56,6 +58,7 @@ export class NodeBuilder {
     initializeWorkflowState: sfn.Choice;
     didWorkflowInitiateSuccessfully: sfn.Choice;
     checkIncrementalExportNeeded: sfn.Choice
+    checkWorkflowAction: sfn.Choice
 
     // AWSService nodes
     ensureTableExistsTask: tasks.CallAwsService;
@@ -72,6 +75,7 @@ export class NodeBuilder {
     setEmptyWorkflowInitiatedParameter: tasks.CallAwsService;
     deleteLastIncrementalExportTimeParameter: tasks.CallAwsService;
     setWorkflowStateParameterToPitrGap: tasks.CallAwsService;
+    setWorkflowActionParameterToRun: tasks.CallAwsService;
     setWorkflowStateParameterToNormal: tasks.CallAwsService;
     
     // Sns public nodes
@@ -117,6 +121,7 @@ export class NodeBuilder {
         this.fullExportTimeParameterName = `${this.parameterPathPrefix}/${SsmParameterConstants.FULL_EXPORT_TIME_PARAMETER_NAME}`;
         this.lastIncrementalExportTimeParameterName = `${this.parameterPathPrefix}/${SsmParameterConstants.LAST_INCREMENTAL_EXPORT_TIME_PARAMETER_NAME}`;
         this.workflowStateParameterName = `${this.parameterPathPrefix}/${SsmParameterConstants.WORKFLOW_STATE_PARAMETER_NAME}`;
+        this.workflowActionParameterName = `${this.parameterPathPrefix}/${SsmParameterConstants.WORKFLOW_ACTION_PARAMETER_NAME}`;
 
         this.awsApiInvocationTaskTimeout = sfn.Timeout.duration(cdk.Duration.seconds(configuration.awsApiInvocationTimeoutInSeconds));
 
@@ -158,28 +163,31 @@ export class NodeBuilder {
             comment: 'Clean output',
             stateName: 'CleanOutput',
             parameters: {
-                'tableInfo.$': `$.${StepFunctionOutputConstants.TABLE_INFO}`,
-                'describeContinuousBackupsOutput.$': `$.${StepFunctionOutputConstants.DESCRIBE_CONTINUOUS_BACKUPS_OUTPUT}`,
                 parameterInfo: {
                     workflowInitiatedParameter: {
                         parameterName: `/${this.workflowInitiatedParameterName}`,
-                        'valueCount.$': `States.ArrayLength($.parameterValues.Parameters[?(@.Name == /${this.workflowInitiatedParameterName})])`,
-                        'value.$': `$.parameterValues.Parameters[?(@.Name == /${this.workflowInitiatedParameterName})]`
+                        'valueCount.$': `States.ArrayLength($.${StepFunctionOutputConstants.PARAMETER_VALUES}.Parameters[?(@.Name == /${this.workflowInitiatedParameterName})])`,
+                        'value.$': `$.${StepFunctionOutputConstants.PARAMETER_VALUES}.Parameters[?(@.Name == /${this.workflowInitiatedParameterName})]`
                     },
                     fullExportTimeParameter: {
                         parameterName: this.fullExportTimeParameterName,
-                        'valueCount.$': `States.ArrayLength($.parameterValues.Parameters[?(@.Name == /${this.fullExportTimeParameterName})])`,
-                        'value.$': `$.parameterValues.Parameters[?(@.Name == /${this.fullExportTimeParameterName})]`
+                        'valueCount.$': `States.ArrayLength($.${StepFunctionOutputConstants.PARAMETER_VALUES}.Parameters[?(@.Name == /${this.fullExportTimeParameterName})])`,
+                        'value.$': `$.${StepFunctionOutputConstants.PARAMETER_VALUES}.Parameters[?(@.Name == /${this.fullExportTimeParameterName})]`
                     },
                     lastIncrementalExportTimeParameter: {
                         parameterName: this.lastIncrementalExportTimeParameterName,
-                        'valueCount.$': `States.ArrayLength($.parameterValues.Parameters[?(@.Name == /${this.lastIncrementalExportTimeParameterName})])`,
-                        'value.$': `$.parameterValues.Parameters[?(@.Name == /${this.lastIncrementalExportTimeParameterName})]`
+                        'valueCount.$': `States.ArrayLength($.${StepFunctionOutputConstants.PARAMETER_VALUES}.Parameters[?(@.Name == /${this.lastIncrementalExportTimeParameterName})])`,
+                        'value.$': `$.${StepFunctionOutputConstants.PARAMETER_VALUES}.Parameters[?(@.Name == /${this.lastIncrementalExportTimeParameterName})]`
                     },
                     workflowStateParameter: {
                         parameterName: this.workflowStateParameterName,
-                        'valueCount.$': `States.ArrayLength($.parameterValues.Parameters[?(@.Name == /${this.workflowStateParameterName})])`,
-                        'value.$': `$.parameterValues.Parameters[?(@.Name == /${this.workflowStateParameterName})]`
+                        'valueCount.$': `States.ArrayLength($.${StepFunctionOutputConstants.PARAMETER_VALUES}.Parameters[?(@.Name == /${this.workflowStateParameterName})])`,
+                        'value.$': `$.${StepFunctionOutputConstants.PARAMETER_VALUES}.Parameters[?(@.Name == /${this.workflowStateParameterName})]`
+                    },
+                    workflowActionParameter: {
+                        parameterName: this.workflowActionParameterName,
+                        'valueCount.$': `States.ArrayLength($.${StepFunctionOutputConstants.PARAMETER_VALUES}.Parameters[?(@.Name == /${this.workflowActionParameterName})])`,
+                        'value.$': `$.${StepFunctionOutputConstants.PARAMETER_VALUES}.Parameters[?(@.Name == /${this.workflowActionParameterName})]`
                     }
                 }
             }
@@ -481,11 +489,12 @@ export class NodeBuilder {
             resultPath: `$.${StepFunctionOutputConstants.PUT_WORKFLOW_STATE_PARAMETER_TO_PITR_GAP_OUTPUT}`,
             taskTimeout: this.awsApiInvocationTaskTimeout
         });
+
         this.setWorkflowStateParameterToNormal = new tasks.CallAwsService(this.scope, 'set-workflow-state-parameter-to-normal', {
             service: 'ssm',
             action: 'putParameter',
             stateName: 'SetWorkflowStateParameterToNormal',
-            comment: 'Update the workflow state parameter to Normal',
+            comment: 'Update the workflow state parameter to NORMAL',
             iamResources: [workflowStateParameterArn],
             parameters: {
                 Name: `/${this.workflowStateParameterName}`,
@@ -494,6 +503,23 @@ export class NodeBuilder {
                 'Type': 'String'
             },
             resultPath: `$.${StepFunctionOutputConstants.PUT_WORKFLOW_STATE_PARAMETER_TO_NORMAL_OUTPUT}`,
+            taskTimeout: this.awsApiInvocationTaskTimeout
+        });
+
+        const workflowActionParameterArn = this.getParameterStoreParameterArn(this.workflowActionParameterName, cdk.ArnFormat.SLASH_RESOURCE_NAME);
+        this.setWorkflowActionParameterToRun = new tasks.CallAwsService(this.scope, 'set-workflow-action-parameter-to-run', {
+            service: 'ssm',
+            action: 'putParameter',
+            stateName: 'SetWorkflowActionParameterToRun',
+            comment: 'Update the workflow action parameter to RUN',
+            iamResources: [workflowActionParameterArn],
+            parameters: {
+                Name: `/${this.workflowActionParameterName}`,
+                'Value': WorkflowAction[WorkflowAction.RUN],
+                'Overwrite': true,
+                'Type': 'String'
+            },
+            resultPath: `$.${StepFunctionOutputConstants.PUT_WORKFLOW_ACTION_PARAMETER_TO_RUN_OUTPUT}`,
             taskTimeout: this.awsApiInvocationTaskTimeout
         });
         
@@ -538,6 +564,11 @@ export class NodeBuilder {
         this.checkIncrementalExportNeeded = new sfn.Choice(this.scope, 'check-incremental-export-needed', {
             comment: 'Check if incremental export is needed',
             stateName: 'CheckIncrementalExportNeeded?'
+        });
+
+        this.checkWorkflowAction = new sfn.Choice(this.scope, 'check-workflow-action-state', {
+            comment: 'Check if workflow needs to run',
+            stateName: 'CheckWorkflowAction?'
         });
 
         this.incrementalExportNotNeeded = new sfn.Succeed(this.scope, 'incremental-export-not-needed', {
@@ -708,7 +739,7 @@ export class NodeBuilder {
         const incrementalExportStartTimeOutsidePitrWindowMessage = 
             `Incremental export start time for table '${this.sourceDynamoDbTable.tableName}' is outside PITR window, most likely due to PITR being disabled and re-enabled`;
         const incrementalExportStartTimeOutsidePitrWindowRemedy = 
-            `Set the '${this.workflowStateParameterName}' to '${WorkflowState[WorkflowState.START_WITH_FULL_EXPORT_AGAIN]}' to reinitialize the workflow [refer to the ReadMe]`;
+            `Set the '${this.workflowActionParameterName}' to '${WorkflowAction[WorkflowAction.RESET_WITH_FULL_EXPORT_AGAIN]}' to reinitialize the workflow [refer to the ReadMe]`;
 
         const incrementalExportStartTimeOutsidePitrWindowSnsMessage = {
             message: incrementalExportStartTimeOutsidePitrWindowMessage,

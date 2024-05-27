@@ -219,28 +219,35 @@ export class DynamoDbContinuousIncrementalExportsStack extends cdk.Stack {
 
     nb.executeFullExport.addCatch(nb.notifyOnTaskFailed, { errors: ['States.ALL'] })
       .next(nb.setFullExportTimeParameter.addCatch(nb.notifyOnTaskFailed, { errors: ['States.ALL'] })
-        .next(nb.setWorkflowStateParameterToNormal
+        .next(nb.setWorkflowActionParameterToRun
+          .addCatch(nb.setEmptyWorkflowInitiatedParameter, {
+            errors: ['Ssm.ParameterNotFoundException'],
+            resultPath: `$.${StepFunctionOutputConstants.PUT_WORKFLOW_ACTION_PARAMETER_TO_RUN_OUTPUT}`,
+          })
+          .addCatch(nb.notifyOnTaskFailed, { errors: ['States.ALL'] })
+          .next(nb.setWorkflowStateParameterToNormal
             .addCatch(nb.setEmptyWorkflowInitiatedParameter, {
               errors: ['Ssm.ParameterNotFoundException'],
-              resultPath: `$.${StepFunctionOutputConstants.SET_WORKFLOW_STATE_PARAMETER_TO_NORMAL_OUTPUT}`,
+              resultPath: `$.${StepFunctionOutputConstants.PUT_WORKFLOW_STATE_PARAMETER_TO_NORMAL_OUTPUT}`,
             })
             .addCatch(nb.notifyOnTaskFailed, { errors: ['States.ALL'] })
-          .next(nb.setEmptyWorkflowInitiatedParameter.addCatch(nb.notifyOnTaskFailed, { errors: ['States.ALL'] })
-            .next(nb.deleteLastIncrementalExportTimeParameter
-                .addCatch(nb.describeFullExport, {
-                  errors: ['Ssm.ParameterNotFoundException'],
-                  resultPath: `$.${StepFunctionOutputConstants.DELETE_LAST_INCREMENTAL_EXPORT_TIME_PARAMETER_OUTPUT}`,
-                })
-                .addCatch(nb.notifyOnTaskFailed, { errors: ['States.ALL'] })
-              .next(nb.describeFullExport
-                  .addRetry(this.dynamoDbSdkRetryHandler())
+            .next(nb.setEmptyWorkflowInitiatedParameter.addCatch(nb.notifyOnTaskFailed, { errors: ['States.ALL'] })
+              .next(nb.deleteLastIncrementalExportTimeParameter
+                  .addCatch(nb.describeFullExport, {
+                    errors: ['Ssm.ParameterNotFoundException'],
+                    resultPath: `$.${StepFunctionOutputConstants.DELETE_LAST_INCREMENTAL_EXPORT_TIME_PARAMETER_OUTPUT}`,
+                  })
                   .addCatch(nb.notifyOnTaskFailed, { errors: ['States.ALL'] })
-                .next(nb.fullExportCompletedState
-                  .when(cb.fullExportCompleted, nb.workflowInitializedParameterTrue.next(nb.setWorkflowInitiatedParameter), {comment: 'FullExport successful'})
-                  .when(cb.fullExportFailed, nb.workflowInitializedParameterFalse.next(nb.setWorkflowInitiatedParameter), {comment: 'FullExport failed'})
-                  .afterwards({includeOtherwise: true})
-                  .next(nb.waitForFullExport
-                    .next(nb.describeFullExport)
+                .next(nb.describeFullExport
+                    .addRetry(this.dynamoDbSdkRetryHandler())
+                    .addCatch(nb.notifyOnTaskFailed, { errors: ['States.ALL'] })
+                  .next(nb.fullExportCompletedState
+                    .when(cb.fullExportCompleted, nb.workflowInitializedParameterTrue.next(nb.setWorkflowInitiatedParameter), {comment: 'FullExport successful'})
+                    .when(cb.fullExportFailed, nb.workflowInitializedParameterFalse.next(nb.setWorkflowInitiatedParameter), {comment: 'FullExport failed'})
+                    .afterwards({includeOtherwise: true})
+                    .next(nb.waitForFullExport
+                      .next(nb.describeFullExport)
+                    )
                   )
                 )
               )
@@ -249,43 +256,46 @@ export class DynamoDbContinuousIncrementalExportsStack extends cdk.Stack {
         )
       );
 
-    const definition = 
-      this.nodeBuilder.ensureTableExistsTask.addCatch(nb.notifyOnTaskFailed, { errors: ['States.ALL'] })
-        .next(nb.describeContinuousBackupsAwsServiceTask.addCatch(nb.notifyOnTaskFailed, { errors: ['States.ALL'] })
-          .next(nb.pitrEnabledChoice
-            .when(cb.pitrIsEnabled, nb.getParametersTask.addCatch(nb.notifyOnTaskFailed, { errors: ['States.ALL'] })
-              .next(nb.cleanParametersPassState
-                .next(nb.initializeWorkflowState
-                  .when(cb.fullExportStillRunning, nb.notifyOnFullExportRunning
-                    .addCatch(nb.notifyOnTaskFailed, { errors: ['States.ALL'] })
-                    .next(nb.fullExportStillRunning), {comment: 'Full export still running'})
-                  .when(cb.pitrGapWorkflowState, nb.notifyOnPitrGap
-                    .addCatch(nb.notifyOnTaskFailed, { errors: ['States.ALL'] })
-                    .next(nb.pitrGapFound), { comment: 'PITR gap found' })
-                  .when(cb.startFullExportAgain, nb.executeFullExport, { comment: 'Workflow needs to start again due to PITR gap'})
-                  .when(cb.isWorkflowPaused, nb.workflowPaused, { comment: 'Workflow has been paused'})
-                  .when(cb.executeFullExport, nb.executeFullExport, { comment: 'Workflow has not been initialized'})
-                  .afterwards({includeOtherwise: true})
-                  .next(nb.isLastIncrementalExportParameterValid
-                    .when(this.conditionBuilder.lastIncrementalExportTimeIsValid, 
-                      nb.useLastIncrementalExportTimeParameterValue
-                        .next(nb.getNextIncrementalExportTimeLambdaInvoke), 
-                      { comment: 'Last incremental export time is valid'}
-                    )
+    const definition = nb.getParametersTask
+          .addCatch(nb.notifyOnTaskFailed, { errors: ['States.ALL'] })
+          .next(nb.cleanParametersPassState
+            .next(nb.checkWorkflowAction
+              .when(cb.isWorkflowPaused, nb.workflowPaused, { comment: 'Workflow is paused'} )
+              .afterwards({includeOtherwise: true})
+              .next(nb.ensureTableExistsTask.addCatch(nb.notifyOnTaskFailed, { errors: ['States.ALL'] })
+                .next(nb.describeContinuousBackupsAwsServiceTask.addCatch(nb.notifyOnTaskFailed, { errors: ['States.ALL'] })
+                  .next(nb.pitrEnabledChoice
+                    .when(cb.pitrIsEnabled, nb.initializeWorkflowState
+                      .when(cb.fullExportStillRunning, nb.notifyOnFullExportRunning
+                        .addCatch(nb.notifyOnTaskFailed, { errors: ['States.ALL'] })
+                        .next(nb.fullExportStillRunning), {comment: 'Full export still running'})
+                      .when(cb.resetWithFullExportAgain, nb.executeFullExport, { comment: 'Workflow needs to start again due to PITR gap'}) // ensure this condition is before the workflow_state:PITR_GAP condition
+                      .when(cb.pitrGapWorkflowState, nb.notifyOnPitrGap
+                        .addCatch(nb.notifyOnTaskFailed, { errors: ['States.ALL'] })
+                        .next(nb.pitrGapFound), { comment: 'PITR gap found' })
+                      .when(cb.executeFullExport, nb.executeFullExport, { comment: 'Workflow has not been initialized'})
+                      .afterwards({includeOtherwise: true})
+                      .next(nb.isLastIncrementalExportParameterValid
+                        .when(this.conditionBuilder.lastIncrementalExportTimeIsValid, 
+                          nb.useLastIncrementalExportTimeParameterValue
+                            .next(nb.getNextIncrementalExportTimeLambdaInvoke), 
+                          { comment: 'Last incremental export time is valid'}
+                        )
+                        .afterwards({includeOtherwise: true})
+                        .next(nb.useFullExportTimeParameterValue
+                          .next(nb.getNextIncrementalExportTimeLambdaInvoke)
+                        )
+                      ), 
+                    { comment: 'PITR is enabled'})
                     .afterwards({includeOtherwise: true})
-                    .next(nb.useFullExportTimeParameterValue
-                      .next(nb.getNextIncrementalExportTimeLambdaInvoke)
+                    .next(nb.notifyOnPitrDisabled.addCatch(nb.notifyOnTaskFailed, { errors: ['States.ALL'] })
+                      .next(nb.pitrDisabledFail)
                     )
                   )
                 )
-              ),
-              { comment: 'PITR is enabled'}
-            ).afterwards({includeOtherwise: true})
-            .next(nb.notifyOnPitrDisabled.addCatch(nb.notifyOnTaskFailed, { errors: ['States.ALL'] })
-              .next(nb.pitrDisabledFail)
+              )
             )
-          )
-        );
+          );
 
     const stateMachineLogGroup = new logs.LogGroup(this, 'incremental-export-log-group', {
       logGroupName: `${this.configuration.deploymentAlias}-incremental-export-log-group`,

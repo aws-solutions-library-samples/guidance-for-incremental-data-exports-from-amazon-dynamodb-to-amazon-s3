@@ -3,12 +3,13 @@ import { StepFunctionOutputConstants } from "./constants/stepFunctionOutputConst
 import { KeywordConstants } from "./constants/keywordConstants";
 import { parameterConstants } from "./constants/parameterConstants";
 import { WorkflowState } from "./constants/WorkflowState";
+import { WorkflowAction } from "./constants/WorkflowAction";
 
 export class ConditionBuilder {
     executeFullExport: sfn.Condition;
     fullExportStillRunning: sfn.Condition;
     pitrGapWorkflowState: sfn.Condition;
-    startFullExportAgain: sfn.Condition;
+    resetWithFullExportAgain: sfn.Condition;
     isWorkflowPaused: sfn.Condition;
 
     earliestRestoreDateTimeIsGreaterThanExportStartTime: sfn.Condition;
@@ -48,16 +49,17 @@ export class ConditionBuilder {
 
         // a full export might take longer to execute and therefore only the full export time should be checked to ensure workflow has been initiated
         this.executeFullExport = sfn.Condition
-            .and(fullExportTimeParameterDoesNotExist, sfn.Condition.or(workflowInitiatedParameterDoesNotExist, workflowInitiatedParameterIsFalse));
-
-        const workflowStateParameterDoesExist = sfn.Condition.numberEquals(`$.${parameterConstants.PARAMETER_INFO}.${parameterConstants.WORKFLOW_STATE_PARAMETER}.valueCount`, 1);
-        const workflowStateParameterIsStartWithFullExportAgain = sfn.Condition.stringEquals(`$.${parameterConstants.PARAMETER_INFO}.${parameterConstants.WORKFLOW_STATE_PARAMETER}.value[0].Value`, WorkflowState[WorkflowState.START_WITH_FULL_EXPORT_AGAIN]);
-        const workflowStateParameterIsPause = sfn.Condition.stringEquals(`$.${parameterConstants.PARAMETER_INFO}.${parameterConstants.WORKFLOW_STATE_PARAMETER}.value[0].Value`, WorkflowState[WorkflowState.PAUSE]);
-        this.startFullExportAgain = sfn.Condition.and(workflowStateParameterDoesExist, workflowStateParameterIsStartWithFullExportAgain);
-        this.isWorkflowPaused = sfn.Condition.and(workflowStateParameterDoesExist, workflowStateParameterIsPause);
+            .and(fullExportTimeParameterDoesNotExist, sfn.Condition.or(workflowInitiatedParameterDoesNotExist, workflowInitiatedParameterIsFalse));        
+        
+        const workflowActionParameterDoesExist = sfn.Condition.numberEquals(`$.${parameterConstants.PARAMETER_INFO}.${parameterConstants.WORKFLOW_ACTION_PARAMETER}.valueCount`, 1);
+        const workflowActionParameterIsPause = sfn.Condition.stringEquals(`$.${parameterConstants.PARAMETER_INFO}.${parameterConstants.WORKFLOW_ACTION_PARAMETER}.value[0].Value`, WorkflowAction[WorkflowAction.PAUSE]);
+        const workflowActionParameterIsResetWithFullExportAgain = sfn.Condition.stringEquals(`$.${parameterConstants.PARAMETER_INFO}.${parameterConstants.WORKFLOW_ACTION_PARAMETER}.value[0].Value`, WorkflowAction[WorkflowAction.RESET_WITH_FULL_EXPORT_AGAIN]);
+        this.isWorkflowPaused = sfn.Condition.and(workflowActionParameterDoesExist, workflowActionParameterIsPause);
+        this.resetWithFullExportAgain = sfn.Condition.and(workflowActionParameterDoesExist, workflowActionParameterIsResetWithFullExportAgain);
 
         this.fullExportStillRunning = sfn.Condition.and(fullExportTimeParameterExist, workflowInitiatedParameterDoesExist, workflowInitiatedParameterIsEmpty);
 
+        const workflowStateParameterDoesExist = sfn.Condition.numberEquals(`$.${parameterConstants.PARAMETER_INFO}.${parameterConstants.WORKFLOW_STATE_PARAMETER}.valueCount`, 1);
         const workflowStateParameterIsPitrGap = sfn.Condition.stringEquals(`$.${parameterConstants.PARAMETER_INFO}.${parameterConstants.WORKFLOW_STATE_PARAMETER}.value[0].Value`, WorkflowState[WorkflowState.PITR_GAP]);
         this.pitrGapWorkflowState = sfn.Condition.and(workflowStateParameterDoesExist, workflowStateParameterIsPitrGap);
         

@@ -1,7 +1,8 @@
 
+// These states are machine-set
 export enum WorkflowState {
     NORMAL,
-    PITR_GAP,
-    START_WITH_FULL_EXPORT_AGAIN,
-    PAUSE
+    PITR_GAP
 }
+
+

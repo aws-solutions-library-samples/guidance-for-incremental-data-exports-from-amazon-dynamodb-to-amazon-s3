@@ -22,8 +22,8 @@ export class StepFunctionOutputConstants {
     static NOTIFY_ON_FULL_EXPORT_RUNNING_OUTPUT = 'notifyOnFullExportRunningOutput';
     static NOTIFY_ON_DESCRIBE_TABLE_FAILED_OUTPUT = 'NotifyOnDescribeTableFailedOutput';
     static DELETE_LAST_INCREMENTAL_EXPORT_TIME_PARAMETER_OUTPUT = 'deleteLastIncrementalExportTimeParameterOutput';
+    static NOTIFY_ON_PITR_GAP_OUTPUT = 'notifyOnPitrGapOutput';
     static PUT_WORKFLOW_STATE_PARAMETER_TO_PITR_GAP_OUTPUT = 'putWorkflowStateParameterToPitrGapOutput';
     static PUT_WORKFLOW_STATE_PARAMETER_TO_NORMAL_OUTPUT = 'putWorkflowStateParameterToNormalOutput';
-    static NOTIFY_ON_PITR_GAP_OUTPUT = 'notifyOnPitrGapOutput';
-    static SET_WORKFLOW_STATE_PARAMETER_TO_NORMAL_OUTPUT = 'setWorkflowStateParameterToNormalOutput'
+    static PUT_WORKFLOW_ACTION_PARAMETER_TO_RUN_OUTPUT = 'putWorkflowActionParameterToRunOutput';
 }
