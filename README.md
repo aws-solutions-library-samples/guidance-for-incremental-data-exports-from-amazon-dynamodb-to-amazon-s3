@@ -11,7 +11,7 @@ With this repository you can quickly start exporting data from your DynamoDB tab
 1. All you need is a DynamoDB Table with [PITR](https://aws.amazon.com/dynamodb/pitr/) enabled
 1. [Clone](https://github.com/aws-samples/dynamodb-continuous-incremental-exports.git) the repository using `git clone https://github.com/aws-samples/dynamodb-continuous-incremental-exports.git`
 1. Change directory using `cd dynamodb-continuous-incremental-exports`
-1. Install NPM packages using `npm install`
+1. Install NPM packages using `npm install` to install all dependencies needed by the workflow
 1. Note that commands below are for `bash` on a MacOS
 1. Deploying the solution requires some parameterized values. The easiest way to set these is to create shell environment variables.
     1. `TABLE_NAME` - The name of your table, also used to create the stack name. Each table gets its own stack.
