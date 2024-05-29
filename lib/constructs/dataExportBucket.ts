@@ -53,16 +53,16 @@ export class DataExportBucket extends Construct {
     this.prefix = props.prefix;
     this.exportFormat = props.exportFormat;
 
-    new cdk.CfnOutput(this, 'export-data-bucket', {
+    new cdk.CfnOutput(this, `${props.deploymentAlias}-data-export-bucket`, {
       value: this.bucket.bucketName,
-      exportName: 'export-data-bucket',
+      exportName: `${props.deploymentAlias}-data-export-bucket`,
       description: 'Data export bucket'
     });
 
     if (this.prefix !== undefined && this.prefix !== "") {
-      new cdk.CfnOutput(this, 'export-data-bucket-prefix', {
+      new cdk.CfnOutput(this, `${props.deploymentAlias}-data-export-bucket-prefix`, {
         value: this.prefix,
-        exportName: 'export-data-bucket-prefix',
+        exportName: `${props.deploymentAlias}-data-export-bucket-prefix`,
         description: 'Data export bucket prefix'
       });
     }

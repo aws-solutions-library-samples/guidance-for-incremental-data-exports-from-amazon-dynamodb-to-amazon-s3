@@ -48,7 +48,7 @@ With this repository you can quickly start exporting data from your DynamoDB tab
 If you are redeploying the solution and have decided to keep the export data bucket (and prefix) intact then the bucket name (and prefix) will need to be passed into the `cdk synth` and `cdk deploy` steps. This ensures your existing export data bucket (and prefix) are used.
 
 #### No bucket and/or prefix specified in original deployment
-Ensure you extract the export data bucket name (export named `export-data-output`) from the output parameters of the CDK deployment. 
+Ensure you extract the export data bucket name (export named `$DEPLOYMENT_ALIAS-data-export-output`) from the output parameters of the CDK deployment. 
 ![Bucket export value](./collateral/bucket-export-value.png)
 
 #### Bucket and/or prefix specified in original deployment
@@ -102,7 +102,9 @@ You can delete the resources created at runtime (CloudWatch Logs and SSM Paramet
 aws ssm delete-parameters --names \
     "/incremental-export/$DEPLOYMENT_ALIAS/full-export-time" \
     "/incremental-export/$DEPLOYMENT_ALIAS/last-incremental-export-time" \
-    "/incremental-export/$DEPLOYMENT_ALIAS/workflow-initiated"
+    "/incremental-export/$DEPLOYMENT_ALIAS/workflow-initiated" \
+    "/incremental-export/$DEPLOYMENT_ALIAS/workflow-state" \
+    "/incremental-export/$DEPLOYMENT_ALIAS/workflow-action"
 
 aws logs delete-log-group \
     --log-group-name $DEPLOYMENT_ALIAS-incremental-export-log-group
@@ -152,14 +154,27 @@ Refer to the below architecture diagram to understand what's deployed.
 
 ### State information
 The solution maintains SSM Parameters to ensure incremental exports work as expected. You'll never need to look at these, but in case you're curious, they help the repeating logic decide what to do next:
-1. Execute a full export if _(full export has never run and/or full export has run and resulted in a failure)_
-    1. `full-export-time` parameter does not exist **AND**
-    1. `workflow-initiated` parameter does not exist **OR** `workflow-initiated` parameter is set to `false`
-1. Skip workflow if _(at times a full export is executed but not completed)_
-    1. `full-export-time` parameter exist **AND** 
-    1. `workflow-initiated` parameter exist **AND** 
-    1. `workflow-initiated` parameter value is `NULL`
-1. Otherwise execute an incremental export
+1. Full export and incremental exports
+    1. Execute a full export if _(full export has never run and/or full export has run and resulted in a failure)_
+        1. `full-export-time` parameter does not exist **AND**
+        1. `workflow-initiated` parameter does not exist **OR** `workflow-initiated` parameter is set to `false`
+    1. Skip workflow if _(at times a full export is executed but not completed)_
+        1. `full-export-time` parameter exist **AND** 
+        1. `workflow-initiated` parameter exist **AND** 
+        1. `workflow-initiated` parameter value is `NULL`
+    1. Otherwise execute an incremental export
+1. Workflow states 
+    1. `NORMAL` state
+    Workflow is working as expected.
+    1. `PITR_GAP` state
+    If the `workflow-state` parameter is set to `PITR_GAP`, this indicates that at some point in time PITR had been _disabled_ and _enabled_. This results in a permanent gap in the table's history. To recover from this state, please set the `workflow-action` to `RESET_WITH_FULL_EXPORT_AGAIN` which will result in a _FULL EXPORT_, essentially reinitializing the workflow after the gap and moving forward from that point. Note that downstream services may need to be reinitialize again starting with the full export.
+1. Workflow actions
+    1. `RUN` state
+    Normal operating conditions
+    1. `PAUSE` state
+    Workflow won't be executed as it has been paused manually
+    1. `RESET_WITH_FULL_EXPORT_AGAIN` state
+    Set when an explicit reiniatilization is required. E.g. when [PITR is turned off/on](#i-get-the-error-incremental-export-start-time-outside-pitr-window)
 
 ### Security
 1. As the Step Functions are deployed using the CDK, the permissions assigned to the role assumed by the Step Function are scoped using the principle of least privilege. Also refer to the [Ensure long term success](#ensure-long-term-success) section.
@@ -169,16 +184,18 @@ The solution maintains SSM Parameters to ensure incremental exports work as expe
 ### Ensure long term success
 * **DO NOT** directly modify the infrastructure deployed by CDK, this includes:
     * Roles and permissions
-    * The SSM Parameters created by the Step Function
+    * The SSM Parameters created by the Step Function, except for `workflow-action` state which allows you to **PAUSE/RESET** the workflow
     * The Lambda Function used by the Step Function
-* **DO NOT** pause or stop the Eventbridge Schedule that triggers the Step Function
+* **DO NOT** pause or stop the Eventbridge Schedule that triggers the Step Function; use the `workflow-action` parameter instead
 
 ### Troubleshooting
 #### How do I enable PITR for this workflow to work?
 [PITR](https://aws.amazon.com/dynamodb/pitr/) can be enabled via the [AWS Console](https://aws.amazon.com/blogs/aws/new-amazon-dynamodb-continuous-backups-and-point-in-time-recovery-pitr/) or the [CLI](https://awscli.amazonaws.com/v2/documentation/api/latest/reference/dynamodb/update-continuous-backups.html). Note that enabling PITR incurs a cost, please use the [AWS Cost Calculator](https://calculator.aws/#/createCalculator/DynamoDB) to determine the charges based on your table size.
 
-#### I get the error "Full export outside PITR window"
-If you have successfully run the workflow in the past and since then disabled PITR and renabled it, you will get the error "Full export outside PITR window". This is because there might be a gap in the time window when PITR was potentially not enabled resulting in data loss. To ensure there is no data loss, a full export needs to be executed again, therefore need a reinitialization of the workflow. This can be done by [deleting all SSM parameters](https://docs.aws.amazon.com/systems-manager/latest/userguide/deleting-parameters.html) under the namespace `/incremental-export/$DEPLOYMENT_ALIAS/`, resulting in the workflow reinitializing.
+#### I get the error "Incremental export start time outside PITR window"
+If you have successfully run the workflow in the past and since then disabled PITR and renabled it, you will get the error "Incremental export start time outside PITR window". To remediate this issue, set the `/incremental-export/$DEPLOYMENT_ALIAS/workflow-action` parameter to `RESET_WITH_FULL_EXPORT_AGAIN`. This allows the workflow to be reinitialized.
+
+This is needed as there might be a gap in the time window when PITR was potentially not enabled, resulting in data loss. To ensure there is no data loss, a full export needs to be executed again, resulting in reinitialization of the workflow.
 
 #### An incremental export has failed
 The email sent upon failure will include details on cause. If the email contains a `remedy` attribute, you should follow those steps to execute an incremental export for the failed time period. If the `remedy` attribute is not included, that means the workflow should recover upon next run without any manual action. Note that your [exports may fall behind](#incremental-exports-falling-behind).
@@ -187,15 +204,15 @@ The email sent upon failure will include details on cause. If the email contains
 No worries. The full export flow will trigger automatically on the next scheduled run or alternatively you can trigger the step function manually after fixing the error.
 
 #### Incremental exports falling behind
-It may happen that your incremental exports fall behind new updates. For example, if you stop the scheduler for any reason and resume at a later date, the incremental exports will start from the time you paused. This will result in the value of `incrementalBlocksBehind` to be more than 0. If this happens the Step Function is designed to automatically recover as it is invoked (via the EventBridge Scheduler) more frequently than the specified Export Window Size (`incrementalExportWindowSizeInMinutes`), specifically 1/3 of the specified window size. E.g. if your window size is 30 minutes, the EventBridge Scheduler is setup to run every 10 minutes. This allows the exports to catch-up.
+It may happen that your incremental exports fall behind new updates. For example, if you set the `workflow-action` state to `PAUSE` or if you stop the scheduler for any reason (which is [not recommended](#ensure-long-term-success)) and resume at a later date, the incremental exports will start from the time you paused. This will result in the value of `incrementalBlocksBehind` to be more than 0. If this happens the Step Function is designed to automatically recover as it is invoked (via the EventBridge Scheduler) more frequently than the specified Export Window Size (`incrementalExportWindowSizeInMinutes`), specifically 1/3 of the specified window size. E.g. if your window size is 30 minutes, the EventBridge Scheduler is setup to run every 10 minutes. This allows the exports to catch-up.
 
 #### Infrastructure was changed behind the scenes
-Improper changes to the infrastructure can often by fixed by redeploying, such as:
+Improper changes to the infrastructure can often be fixed by redeploying, such as:
 1. Accidental manual deletion/modification of the required roles or permissions
 1. Accidental manual deletion/modification of the S3 bucket or export data within the bucket
 1. Accidental manual deletion/modification of the needed Lambda function(s)
 
-To redeploy, do the `cdk destroy` sequence as described above then the `cdk deploy` sequence. You can keep your existing S3 data and it will be reused so long as you pass in the same bucket name `dataExportBucketName` and also prefix `dataExportBucketPrefix`. 
+To redeploy, do the `cdk destroy` sequence as described in the [cleanup](#cleanup) section then the `cdk deploy` [redployment sequence](#redeployment). You can keep your existing S3 data and it will be reused so long as you pass in the same bucket name `dataExportBucketName` and also prefix `dataExportBucketPrefix`. 
 
 #### Further troubleshooting
 Further troubleshooting can be done via the Step Functions view in the AWS Console.
@@ -224,6 +241,9 @@ All notifications are sent to a single SNS topic with the schema:
     },
     "status": {
       "enum": ["SUCCESS", "FAILED"]
+    },
+    "executionId": {
+      "type": "string"
     },
     "incrementalBlocksBehind": {
       "type": "integer"

@@ -2,14 +2,17 @@ import { aws_stepfunctions as sfn } from "aws-cdk-lib"
 import { StepFunctionOutputConstants } from "./constants/stepFunctionOutputConstants";
 import { KeywordConstants } from "./constants/keywordConstants";
 import { parameterConstants } from "./constants/parameterConstants";
+import { WorkflowState } from "./constants/WorkflowState";
+import { WorkflowAction } from "./constants/WorkflowAction";
 
 export class ConditionBuilder {
     executeFullExport: sfn.Condition;
     fullExportStillRunning: sfn.Condition;
+    pitrGapWorkflowState: sfn.Condition;
+    resetWithFullExportAgain: sfn.Condition;
+    isWorkflowPaused: sfn.Condition;
 
-    fullExportTimeParameterIsGreaterThanCond: sfn.Condition;
-    fullExportTimeParameterIsLessThanCond: sfn.Condition;
-    fullExportTimeParameterFallsOutsidePitrWindow: sfn.Condition;
+    earliestRestoreDateTimeIsGreaterThanExportStartTime: sfn.Condition;
 
     lastIncrementalExportTimeParameterExist: sfn.Condition;
     lastIncrementalExportTimeParameterIsTrue: sfn.Condition;
@@ -46,19 +49,24 @@ export class ConditionBuilder {
 
         // a full export might take longer to execute and therefore only the full export time should be checked to ensure workflow has been initiated
         this.executeFullExport = sfn.Condition
-            .and(fullExportTimeParameterDoesNotExist, sfn.Condition.or(workflowInitiatedParameterDoesNotExist, workflowInitiatedParameterIsFalse));
+            .and(fullExportTimeParameterDoesNotExist, sfn.Condition.or(workflowInitiatedParameterDoesNotExist, workflowInitiatedParameterIsFalse));        
+        
+        const workflowActionParameterDoesExist = sfn.Condition.numberEquals(`$.${parameterConstants.PARAMETER_INFO}.${parameterConstants.WORKFLOW_ACTION_PARAMETER}.valueCount`, 1);
+        const workflowActionParameterIsPause = sfn.Condition.stringEquals(`$.${parameterConstants.PARAMETER_INFO}.${parameterConstants.WORKFLOW_ACTION_PARAMETER}.value[0].Value`, WorkflowAction[WorkflowAction.PAUSE]);
+        const workflowActionParameterIsResetWithFullExportAgain = sfn.Condition.stringEquals(`$.${parameterConstants.PARAMETER_INFO}.${parameterConstants.WORKFLOW_ACTION_PARAMETER}.value[0].Value`, WorkflowAction[WorkflowAction.RESET_WITH_FULL_EXPORT_AGAIN]);
+        this.isWorkflowPaused = sfn.Condition.and(workflowActionParameterDoesExist, workflowActionParameterIsPause);
+        this.resetWithFullExportAgain = sfn.Condition.and(workflowActionParameterDoesExist, workflowActionParameterIsResetWithFullExportAgain);
 
         this.fullExportStillRunning = sfn.Condition.and(fullExportTimeParameterExist, workflowInitiatedParameterDoesExist, workflowInitiatedParameterIsEmpty);
-        
 
-        this.fullExportTimeParameterIsGreaterThanCond = 
-            sfn.Condition.timestampGreaterThanJsonPath(`$.${parameterConstants.PARAMETER_INFO}.${parameterConstants.FULL_EXPORT_TIME_PARAMETER}.value[0].Value`, 
-                `$.${StepFunctionOutputConstants.DESCRIBE_CONTINUOUS_BACKUPS_OUTPUT}.ContinuousBackupsDescription.PointInTimeRecoveryDescription.LatestRestorableDateTime`);
-        this.fullExportTimeParameterIsLessThanCond = 
-            sfn.Condition.timestampLessThanJsonPath(`$.${parameterConstants.PARAMETER_INFO}.${parameterConstants.FULL_EXPORT_TIME_PARAMETER}.value[0].Value`, 
-                `$.${StepFunctionOutputConstants.DESCRIBE_CONTINUOUS_BACKUPS_OUTPUT}.ContinuousBackupsDescription.PointInTimeRecoveryDescription.EarliestRestorableDateTime`);
-        this.fullExportTimeParameterFallsOutsidePitrWindow =
-            sfn.Condition.or(this.fullExportTimeParameterIsGreaterThanCond, this.fullExportTimeParameterIsLessThanCond);
+        const workflowStateParameterDoesExist = sfn.Condition.numberEquals(`$.${parameterConstants.PARAMETER_INFO}.${parameterConstants.WORKFLOW_STATE_PARAMETER}.valueCount`, 1);
+        const workflowStateParameterIsPitrGap = sfn.Condition.stringEquals(`$.${parameterConstants.PARAMETER_INFO}.${parameterConstants.WORKFLOW_STATE_PARAMETER}.value[0].Value`, WorkflowState[WorkflowState.PITR_GAP]);
+        this.pitrGapWorkflowState = sfn.Condition.and(workflowStateParameterDoesExist, workflowStateParameterIsPitrGap);
+        
+        this.earliestRestoreDateTimeIsGreaterThanExportStartTime = 
+            sfn.Condition.timestampGreaterThanJsonPath(
+                `$.${StepFunctionOutputConstants.DESCRIBE_CONTINUOUS_BACKUPS_OUTPUT}.ContinuousBackupsDescription.PointInTimeRecoveryDescription.EarliestRestorableDateTime`,
+                `$.${StepFunctionOutputConstants.EXPORT_TIME_PARAMETER_TO_USE_OUTPUT}.exportTimeParameterToUse`);
 
         this.lastIncrementalExportTimeParameterExist = sfn.Condition.numberEquals(`$.${parameterConstants.PARAMETER_INFO}.${parameterConstants.LAST_INCREMENTAL_EXPORT_TIME_PARAMETER}.valueCount`, 1);
         this.lastIncrementalExportTimeParameterIsTrue = sfn.Condition.isTimestamp(`$.${parameterConstants.PARAMETER_INFO}.${parameterConstants.LAST_INCREMENTAL_EXPORT_TIME_PARAMETER}.value[0].Value`);

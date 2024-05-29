@@ -16,6 +16,8 @@ import { ExportType } from "./constants/exportType";
 import { ExportViewType } from "./constants/exportViewType";
 import { Configuration } from './configuration';
 import { IncrementalExportDefaults } from './constants/incrementalExportDefaults';
+import { WorkflowState } from './constants/WorkflowState';
+import { WorkflowAction } from './constants/WorkflowAction';
 
 export class NodeBuilder {
 
@@ -29,6 +31,8 @@ export class NodeBuilder {
     private workflowInitiatedParameterName: string;
     private fullExportTimeParameterName: string;
     private lastIncrementalExportTimeParameterName: string;
+    private workflowStateParameterName: string;
+    private workflowActionParameterName: string;
 
     private incrementalExportWindowSizeInMinutes: number;
     private waitTimeToCheckExportStatusInSeconds: number;
@@ -50,10 +54,11 @@ export class NodeBuilder {
     didIncrementalExportCompleteSuccessfully: sfn.Choice;
     fullExportCompletedState: sfn.Choice;
     pitrEnabledChoice: sfn.Choice;
-    isFullExportParameterValidChoice: sfn.Choice;
+    isEarliestRestoreDateTimeValidChoice: sfn.Choice;
     initializeWorkflowState: sfn.Choice;
     didWorkflowInitiateSuccessfully: sfn.Choice;
     checkIncrementalExportNeeded: sfn.Choice
+    checkWorkflowAction: sfn.Choice
 
     // AWSService nodes
     ensureTableExistsTask: tasks.CallAwsService;
@@ -69,18 +74,22 @@ export class NodeBuilder {
     setWorkflowInitiatedParameter: tasks.CallAwsService;
     setEmptyWorkflowInitiatedParameter: tasks.CallAwsService;
     deleteLastIncrementalExportTimeParameter: tasks.CallAwsService;
+    setWorkflowStateParameterToPitrGap: tasks.CallAwsService;
+    setWorkflowActionParameterToRun: tasks.CallAwsService;
+    setWorkflowStateParameterToNormal: tasks.CallAwsService;
     
     // Sns public nodes
-    notifyOnFullExportOutsidePitrWindow: tasks.SnsPublish;
+    notifyOnIncrementalExportStartTimeOutsidePitrWindow: tasks.SnsPublish;
     notifyOnIncrementalExport: tasks.SnsPublish;
     notifyOnFullExport: tasks.SnsPublish;
     notifyOnFullExportRunning: tasks.SnsPublish;
     notifyOnPitrDisabled: tasks.SnsPublish;
     notifyOnTaskFailed: tasks.SnsPublish;
+    notifyOnPitrGap: tasks.SnsPublish;
     
     // Success/Fail nodes
     taskFailedNode: sfn.Fail;
-    fullExportOutsidePitrWindowFail: sfn.Fail;
+    incrementalExportStartTimeOutsidePitrWindowFail: sfn.Fail;
     pitrDisabledFail: sfn.Fail;
     incrementalExportSucceeded: sfn.Succeed;
     incrementalExportFailed: sfn.Fail;
@@ -88,6 +97,8 @@ export class NodeBuilder {
     fullExportSucceeded: sfn.Succeed;
     fullExportStillRunning: sfn.Succeed;
     incrementalExportNotNeeded: sfn.Succeed;
+    pitrGapFound: sfn.Fail;
+    workflowPaused: sfn.Succeed;
     
     // Wait nodes
     waitForIncrementalExport: sfn.Wait;
@@ -109,6 +120,8 @@ export class NodeBuilder {
         this.workflowInitiatedParameterName = `${this.parameterPathPrefix}/${SsmParameterConstants.WORKFLOW_INITIATED_PARAMETER_NAME}`;
         this.fullExportTimeParameterName = `${this.parameterPathPrefix}/${SsmParameterConstants.FULL_EXPORT_TIME_PARAMETER_NAME}`;
         this.lastIncrementalExportTimeParameterName = `${this.parameterPathPrefix}/${SsmParameterConstants.LAST_INCREMENTAL_EXPORT_TIME_PARAMETER_NAME}`;
+        this.workflowStateParameterName = `${this.parameterPathPrefix}/${SsmParameterConstants.WORKFLOW_STATE_PARAMETER_NAME}`;
+        this.workflowActionParameterName = `${this.parameterPathPrefix}/${SsmParameterConstants.WORKFLOW_ACTION_PARAMETER_NAME}`;
 
         this.awsApiInvocationTaskTimeout = sfn.Timeout.duration(cdk.Duration.seconds(configuration.awsApiInvocationTimeoutInSeconds));
 
@@ -150,49 +163,44 @@ export class NodeBuilder {
             comment: 'Clean output',
             stateName: 'CleanOutput',
             parameters: {
-                'tableInfo.$': `$.${StepFunctionOutputConstants.TABLE_INFO}`,
-                'describeContinuousBackupsOutput.$': `$.${StepFunctionOutputConstants.DESCRIBE_CONTINUOUS_BACKUPS_OUTPUT}`,
                 parameterInfo: {
                     workflowInitiatedParameter: {
                         parameterName: `/${this.workflowInitiatedParameterName}`,
-                        'valueCount.$': `States.ArrayLength($.parameterValues.Parameters[?(@.Name == /${this.workflowInitiatedParameterName})])`,
-                        'value.$': `$.parameterValues.Parameters[?(@.Name == /${this.workflowInitiatedParameterName})]`
+                        'valueCount.$': `States.ArrayLength($.${StepFunctionOutputConstants.PARAMETER_VALUES}.Parameters[?(@.Name == /${this.workflowInitiatedParameterName})])`,
+                        'value.$': `$.${StepFunctionOutputConstants.PARAMETER_VALUES}.Parameters[?(@.Name == /${this.workflowInitiatedParameterName})]`
                     },
                     fullExportTimeParameter: {
                         parameterName: this.fullExportTimeParameterName,
-                        'valueCount.$': `States.ArrayLength($.parameterValues.Parameters[?(@.Name == /${this.fullExportTimeParameterName})])`,
-                        'value.$': `$.parameterValues.Parameters[?(@.Name == /${this.fullExportTimeParameterName})]`
+                        'valueCount.$': `States.ArrayLength($.${StepFunctionOutputConstants.PARAMETER_VALUES}.Parameters[?(@.Name == /${this.fullExportTimeParameterName})])`,
+                        'value.$': `$.${StepFunctionOutputConstants.PARAMETER_VALUES}.Parameters[?(@.Name == /${this.fullExportTimeParameterName})]`
                     },
                     lastIncrementalExportTimeParameter: {
                         parameterName: this.lastIncrementalExportTimeParameterName,
-                        'valueCount.$': `States.ArrayLength($.parameterValues.Parameters[?(@.Name == /${this.lastIncrementalExportTimeParameterName})])`,
-                        'value.$': `$.parameterValues.Parameters[?(@.Name == /${this.lastIncrementalExportTimeParameterName})]`
+                        'valueCount.$': `States.ArrayLength($.${StepFunctionOutputConstants.PARAMETER_VALUES}.Parameters[?(@.Name == /${this.lastIncrementalExportTimeParameterName})])`,
+                        'value.$': `$.${StepFunctionOutputConstants.PARAMETER_VALUES}.Parameters[?(@.Name == /${this.lastIncrementalExportTimeParameterName})]`
+                    },
+                    workflowStateParameter: {
+                        parameterName: this.workflowStateParameterName,
+                        'valueCount.$': `States.ArrayLength($.${StepFunctionOutputConstants.PARAMETER_VALUES}.Parameters[?(@.Name == /${this.workflowStateParameterName})])`,
+                        'value.$': `$.${StepFunctionOutputConstants.PARAMETER_VALUES}.Parameters[?(@.Name == /${this.workflowStateParameterName})]`
+                    },
+                    workflowActionParameter: {
+                        parameterName: this.workflowActionParameterName,
+                        'valueCount.$': `States.ArrayLength($.${StepFunctionOutputConstants.PARAMETER_VALUES}.Parameters[?(@.Name == /${this.workflowActionParameterName})])`,
+                        'value.$': `$.${StepFunctionOutputConstants.PARAMETER_VALUES}.Parameters[?(@.Name == /${this.workflowActionParameterName})]`
                     }
                 }
             }
         });
 
-        const fullExportOutsidePitrWindowSnsMessage = {
-            message: `Full export for table ${this.sourceDynamoDbTable.tableName} is outside PITR window, most likely due to PITR being disabled and re-enabled`,
-            'executionId.$': '$$.Execution.Id',
-            exportType: ExportType[ExportType.INCREMENTAL_EXPORT],
-            status: KeywordConstants.SNS_FAILED,
-            remedy: `Worklow needs to be reinitiated by deleting all SSM parameters under the namespace '${this.parameterPathPrefix}' [refer to the ReadMe]`
-          };
+        this.notifyOnIncrementalExportStartTimeOutsidePitrWindow = this.getNotifyOnIncrementalExportStartTimeOutsidePitrWindowSnsPublishTask(
+            'notify-on-incremental-export-start-time-outside-pitr-window',
+            'NotifyOnIncrementalExportStartTimeOutsidePITRWindow',
+            `$.${StepFunctionOutputConstants.NOTIFY_ON_INCREMENTAL_EXPORT_START_TIME_OUTSIDE_PITR_WINDOW_OUTPUT}`);
 
-        this.notifyOnFullExportOutsidePitrWindow = 
-            this.getSnsPublishTask(
-                'notify-on-full-export-outside-pitr-window', 
-                'NotifyOnFullExportOutsidePITRWindow', 
-                'Full export outside PITR window', 
-                sfn.TaskInput.fromObject(fullExportOutsidePitrWindowSnsMessage), 
-                'Full export is outside PITR window', 
-                `$.${StepFunctionOutputConstants.NOTIFY_ON_FULL_EXPORT_OUTSIDE_PITR_WINDOW_OUTPUT}`);
-        
-        
-        this.fullExportOutsidePitrWindowFail = new sfn.Fail(this.scope, 'full-export-window-outside-pitr-window-fail', {
-            stateName: 'FullExportOutsidePITRWindow',
-            error: 'FullExportOutsidePITR',
+        this.incrementalExportStartTimeOutsidePitrWindowFail = new sfn.Fail(this.scope, 'incremental-export-start-time-outside-pitr-window-fail', {
+            stateName: 'IncrementalExportStartTimeOutsidePITRWindow',
+            error: 'IncrementalExportStartTimeOutsidePITRWindow',
             cause: 'PITR might be disabled and enabled invalidating the last full table export'
         });
 
@@ -409,9 +417,9 @@ export class NodeBuilder {
             { TableName: this.sourceDynamoDbTable.tableName }
         );
 
-        this.isFullExportParameterValidChoice = new sfn.Choice(this.scope, 'is-full-export-parameter-valid-choice', {
-            stateName: 'IsFullExportParameterValid?',
-            comment: 'Ensure the full export parameter is in a valid state'
+        this.isEarliestRestoreDateTimeValidChoice = new sfn.Choice(this.scope, 'is-earliest-restore-datetime-valid-choice', {
+            stateName: 'IsEarliestRestoreDateTimeValid?',
+            comment: 'Ensure the PITR earliest restore date time is less than the start time of the incremental'
         });
 
         this.incrementalExportSucceeded = new sfn.Succeed(this.scope, 'incremental-export-succeeded', { 
@@ -464,6 +472,57 @@ export class NodeBuilder {
             resultPath: `$.${StepFunctionOutputConstants.PUT_WORKFLOW_INITIATED_PARAMETER_OUTPUT}`,
             taskTimeout: this.awsApiInvocationTaskTimeout
         });
+        
+        const workflowStateParameterArn = this.getParameterStoreParameterArn(this.workflowStateParameterName, cdk.ArnFormat.SLASH_RESOURCE_NAME);
+        this.setWorkflowStateParameterToPitrGap = new tasks.CallAwsService(this.scope, 'set-workflow-state-parameter-to-pitr', {
+            service: 'ssm',
+            action: 'putParameter',
+            stateName: 'SetWorkflowStateParameterToPitrGap',
+            comment: 'Update the workflow state parameter to PITR gap',
+            iamResources: [workflowStateParameterArn],
+            parameters: {
+                Name: `/${this.workflowStateParameterName}`,
+                'Value': WorkflowState[WorkflowState.PITR_GAP],
+                'Overwrite': true,
+                'Type': 'String'
+            },
+            resultPath: `$.${StepFunctionOutputConstants.PUT_WORKFLOW_STATE_PARAMETER_TO_PITR_GAP_OUTPUT}`,
+            taskTimeout: this.awsApiInvocationTaskTimeout
+        });
+
+        this.setWorkflowStateParameterToNormal = new tasks.CallAwsService(this.scope, 'set-workflow-state-parameter-to-normal', {
+            service: 'ssm',
+            action: 'putParameter',
+            stateName: 'SetWorkflowStateParameterToNormal',
+            comment: 'Update the workflow state parameter to NORMAL',
+            iamResources: [workflowStateParameterArn],
+            parameters: {
+                Name: `/${this.workflowStateParameterName}`,
+                'Value': WorkflowState[WorkflowState.NORMAL],
+                'Overwrite': true,
+                'Type': 'String'
+            },
+            resultPath: `$.${StepFunctionOutputConstants.PUT_WORKFLOW_STATE_PARAMETER_TO_NORMAL_OUTPUT}`,
+            taskTimeout: this.awsApiInvocationTaskTimeout
+        });
+
+        const workflowActionParameterArn = this.getParameterStoreParameterArn(this.workflowActionParameterName, cdk.ArnFormat.SLASH_RESOURCE_NAME);
+        this.setWorkflowActionParameterToRun = new tasks.CallAwsService(this.scope, 'set-workflow-action-parameter-to-run', {
+            service: 'ssm',
+            action: 'putParameter',
+            stateName: 'SetWorkflowActionParameterToRun',
+            comment: 'Update the workflow action parameter to RUN',
+            iamResources: [workflowActionParameterArn],
+            parameters: {
+                Name: `/${this.workflowActionParameterName}`,
+                'Value': WorkflowAction[WorkflowAction.RUN],
+                'Overwrite': true,
+                'Type': 'String'
+            },
+            resultPath: `$.${StepFunctionOutputConstants.PUT_WORKFLOW_ACTION_PARAMETER_TO_RUN_OUTPUT}`,
+            taskTimeout: this.awsApiInvocationTaskTimeout
+        });
+        
 
         this.setEmptyWorkflowInitiatedParameter = new tasks.CallAwsService(this.scope, 'set-empty-workflow-initiated-parameter', {
             service: 'ssm',
@@ -479,6 +538,10 @@ export class NodeBuilder {
             },
             resultPath: `$.${StepFunctionOutputConstants.PUT_WORKFLOW_INITIATED_PARAMETER_OUTPUT}`,
             taskTimeout: this.awsApiInvocationTaskTimeout
+        });
+
+        this.pitrGapFound = new sfn.Fail(this.scope, 'pitr-gap-found-failed',  {
+            stateName: 'PITRGapFound'
         });
 
         this.fullExportFailed = new sfn.Fail(this.scope, 'full-export-failed',  {
@@ -503,9 +566,19 @@ export class NodeBuilder {
             stateName: 'CheckIncrementalExportNeeded?'
         });
 
+        this.checkWorkflowAction = new sfn.Choice(this.scope, 'check-workflow-action-state', {
+            comment: 'Check if workflow needs to run',
+            stateName: 'CheckWorkflowAction?'
+        });
+
         this.incrementalExportNotNeeded = new sfn.Succeed(this.scope, 'incremental-export-not-needed', {
             comment: 'Incremental export not needed',
             stateName: 'IncrementalExportNotNeeded'
+        });
+
+        this.workflowPaused = new sfn.Succeed(this.scope, 'workflow-paused', {
+            comment: 'Workflow has been paused',
+            stateName: 'WorkflowPaused'
         });
 
         this.notifyOnFullExport = this.getSnsPublishTask(
@@ -521,13 +594,16 @@ export class NodeBuilder {
             'NotifyOnFullExportRunning', 
             'Full export outcome', 
             sfn.TaskInput.fromObject({
-                message: `${ExportType[ExportType.FULL_EXPORT]} export for table \'${this.sourceDynamoDbTable.tableName}\' is still running`,
+                message: `${ExportType[ExportType.FULL_EXPORT]} export for table '${this.sourceDynamoDbTable.tableName}' is still running`,
                 'executionId.$': '$$.Execution.Id',
                 exportType: ExportType[ExportType.FULL_EXPORT],
                 status: KeywordConstants.SNS_SUCCESS
             }),
             'Notify on full export running', 
             `$.${StepFunctionOutputConstants.NOTIFY_ON_FULL_EXPORT_RUNNING_OUTPUT}`);
+            
+        this.notifyOnPitrGap = this.getNotifyOnIncrementalExportStartTimeOutsidePitrWindowSnsPublishTask('notify-on-pitr-gap', 
+            'NotifyOnPitrGap', `$.${StepFunctionOutputConstants.NOTIFY_ON_PITR_GAP_OUTPUT}`);
 
         this.notifyOnTaskFailed = this.getSnsPublishTask(
             'notify-on-task-failed', 
@@ -656,5 +732,24 @@ export class NodeBuilder {
             resultPath: resultPath,
             subject: subject
         });
+    }
+
+    private getNotifyOnIncrementalExportStartTimeOutsidePitrWindowSnsPublishTask(id: string, stateName: string, outputName: string) : tasks.SnsPublish {
+
+        const incrementalExportStartTimeOutsidePitrWindowMessage = 
+            `Incremental export start time for table '${this.sourceDynamoDbTable.tableName}' is outside PITR window, most likely due to PITR being disabled and re-enabled`;
+        const incrementalExportStartTimeOutsidePitrWindowRemedy = 
+            `Set the '${this.workflowActionParameterName}' to '${WorkflowAction[WorkflowAction.RESET_WITH_FULL_EXPORT_AGAIN]}' to reinitialize the workflow [refer to the ReadMe]`;
+
+        const incrementalExportStartTimeOutsidePitrWindowSnsMessage = {
+            message: incrementalExportStartTimeOutsidePitrWindowMessage,
+            'executionId.$': '$$.Execution.Id',
+            exportType: ExportType[ExportType.INCREMENTAL_EXPORT],
+            status: KeywordConstants.SNS_FAILED,
+            remedy: incrementalExportStartTimeOutsidePitrWindowRemedy
+          };
+
+        return this.getSnsPublishTask(id, stateName, 'Incremental export start time outside PITR window', 
+            sfn.TaskInput.fromObject(incrementalExportStartTimeOutsidePitrWindowSnsMessage), 'Notify on PITR gap', outputName);
     }
 }
