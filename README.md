@@ -167,7 +167,7 @@ The solution maintains SSM Parameters to ensure incremental exports work as expe
     1. `NORMAL` state
     Workflow is working as expected.
     1. `PITR_GAP` state
-    If the `workflow-state` parameter is set to `PITR_GAP`, this indicates that at some point in time PITR had been _disable_ and _enabled_. This results in data loss as there was no change information captured for that period. To recover from this state please set the `workflow-action` to `RESET_WITH_FULL_EXPORT_AGAIN` which will result in a _FULL EXPORT_, essentially reinitializing the workflow.
+    If the `workflow-state` parameter is set to `PITR_GAP`, this indicates that at some point in time PITR had been _disabled_ and _enabled_. This results in a permanent gap in the table's history. To recover from this state, please set the `workflow-action` to `RESET_WITH_FULL_EXPORT_AGAIN` which will result in a _FULL EXPORT_, essentially reinitializing the workflow after the gap and moving forward from that point. Note that downstream services may need to be reinitialize again starting with the full export.
 1. Workflow actions
     1. `RUN` state
     Normal operating conditions
@@ -195,7 +195,7 @@ The solution maintains SSM Parameters to ensure incremental exports work as expe
 #### I get the error "Incremental export start time outside PITR window"
 If you have successfully run the workflow in the past and since then disabled PITR and renabled it, you will get the error "Incremental export start time outside PITR window". To remediate this issue, set the `/incremental-export/$DEPLOYMENT_ALIAS/workflow-action` parameter to `RESET_WITH_FULL_EXPORT_AGAIN`. This allows the workflow to be reinitialized.
 
-This is needed as there might be a gap in the time window when PITR was potentially not enabled resulting in data loss. To ensure there is no data loss, a full export needs to be executed again, resulting in reinitialization of the workflow.
+This is needed as there might be a gap in the time window when PITR was potentially not enabled, resulting in data loss. To ensure there is no data loss, a full export needs to be executed again, resulting in reinitialization of the workflow.
 
 #### An incremental export has failed
 The email sent upon failure will include details on cause. If the email contains a `remedy` attribute, you should follow those steps to execute an incremental export for the failed time period. If the `remedy` attribute is not included, that means the workflow should recover upon next run without any manual action. Note that your [exports may fall behind](#incremental-exports-falling-behind).
