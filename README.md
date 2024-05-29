@@ -9,7 +9,7 @@ With this repository you can quickly start exporting data from your DynamoDB tab
 
 ## Usage
 1. All you need is a DynamoDB Table with [PITR](https://aws.amazon.com/dynamodb/pitr/) enabled
-1. [Clone](git@ssh.gitlab.aws.dev:dantrard/ddb-incremental-export.git) the repository (<mark>Insert correct Git clone command here once repo is live</mark>)
+1. [Clone](https://github.com/aws-samples/dynamodb-continuous-incremental-exports.git) the repository
 1. Change directory using `cd ddb-incremental-export`
 1. Install NPM packages using `npm install`
 1. Note that commands below are for `bash` on a MacOS
