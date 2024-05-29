@@ -2,8 +2,8 @@ import { aws_stepfunctions as sfn } from "aws-cdk-lib"
 import { StepFunctionOutputConstants } from "./constants/stepFunctionOutputConstants";
 import { KeywordConstants } from "./constants/keywordConstants";
 import { parameterConstants } from "./constants/parameterConstants";
-import { WorkflowState } from "./constants/WorkflowState";
-import { WorkflowAction } from "./constants/WorkflowAction";
+import { WorkflowState } from "./constants/workflowState";
+import { WorkflowAction } from "./constants/workflowAction";
 
 export class ConditionBuilder {
     executeFullExport: sfn.Condition;

@@ -16,8 +16,8 @@ import { ExportType } from "./constants/exportType";
 import { ExportViewType } from "./constants/exportViewType";
 import { Configuration } from './configuration';
 import { IncrementalExportDefaults } from './constants/incrementalExportDefaults';
-import { WorkflowState } from './constants/WorkflowState';
-import { WorkflowAction } from './constants/WorkflowAction';
+import { WorkflowState } from './constants/workflowState';
+import { WorkflowAction } from './constants/workflowAction';
 
 export class NodeBuilder {
 
