@@ -19,6 +19,7 @@ import { StepFunctionOutputConstants } from './constants/stepFunctionOutputConst
 import { DataExportBucket } from './constructs/dataExportBucket';
 import { NodeBuilder } from './nodeBuilder';
 import { KeywordConstants } from './constants/keywordConstants';
+import { IncrementalExportDefaults } from './constants/incrementalExportDefaults';
 
 export class DynamoDbContinuousIncrementalExportsStack extends cdk.Stack {
 
@@ -147,18 +148,18 @@ export class DynamoDbContinuousIncrementalExportsStack extends cdk.Stack {
   private dynamoDbSdkRetryHandler() : any {
     return {
       errors: ['DynamoDb.SdkClientException'], 
-      interval: cdk.Duration.seconds(20), 
-      maxAttempts: 2, 
-      backoffRate: 1
+      interval: cdk.Duration.seconds(IncrementalExportDefaults.SDK_EXCEPTION_INTERVAL_DURATION_SECONDS), 
+      maxAttempts: IncrementalExportDefaults.SDK_EXCEPTION_RETRY_ATTEMPTS, 
+      backoffRate: IncrementalExportDefaults.SDK_EXCEPTION_BACKOFF_RATE
     };
   }
 
   private ssmSdkRetryHandler() : any {
     return {
       errors: ['Ssm.SdkClientException'], 
-      interval: cdk.Duration.seconds(20), 
-      maxAttempts: 2, 
-      backoffRate: 1
+      interval: cdk.Duration.seconds(IncrementalExportDefaults.SDK_EXCEPTION_INTERVAL_DURATION_SECONDS), 
+      maxAttempts: IncrementalExportDefaults.SDK_EXCEPTION_RETRY_ATTEMPTS, 
+      backoffRate: IncrementalExportDefaults.SDK_EXCEPTION_BACKOFF_RATE
     };
   }
 
@@ -195,6 +196,7 @@ export class DynamoDbContinuousIncrementalExportsStack extends cdk.Stack {
 
               // At times the incremental export happens too quickly and therefore resulting in the exportToTime being past the current time
               .addRetry({errors: ['DynamoDb.InvalidExportTimeException'], interval: cdk.Duration.minutes(1), maxAttempts: 2, backoffRate: 1})
+              .addRetry(this.dynamoDbSdkRetryHandler())
             .next(nb.setLastIncrementalExportTimeParameter
                 .addCatch(nb.notifyOnTaskFailed, { errors: ['States.ALL'] })
                 .addRetry(this.ssmSdkRetryHandler())
@@ -229,7 +231,9 @@ export class DynamoDbContinuousIncrementalExportsStack extends cdk.Stack {
   
     nb.notifyOnTaskFailed.next(nb.taskFailedNode);
 
-    nb.executeFullExport.addCatch(nb.notifyOnTaskFailed, { errors: ['States.ALL'] })
+    nb.executeFullExport
+        .addCatch(nb.notifyOnTaskFailed, { errors: ['States.ALL'] })
+        .addRetry(this.dynamoDbSdkRetryHandler())
       .next(nb.setFullExportTimeParameter
           .addCatch(nb.notifyOnTaskFailed, { errors: ['States.ALL'] })
           .addRetry(this.ssmSdkRetryHandler())
@@ -282,8 +286,12 @@ export class DynamoDbContinuousIncrementalExportsStack extends cdk.Stack {
             .next(nb.checkWorkflowAction
               .when(cb.isWorkflowPaused, nb.workflowPaused, { comment: 'Workflow is paused'} )
               .afterwards({includeOtherwise: true})
-              .next(nb.ensureTableExistsTask.addCatch(nb.notifyOnTaskFailed, { errors: ['States.ALL'] })
-                .next(nb.describeContinuousBackupsAwsServiceTask.addCatch(nb.notifyOnTaskFailed, { errors: ['States.ALL'] })
+              .next(nb.ensureTableExistsTask
+                  .addCatch(nb.notifyOnTaskFailed, { errors: ['States.ALL'] })
+                  .addRetry(this.dynamoDbSdkRetryHandler())
+                .next(nb.describeContinuousBackupsAwsServiceTask
+                    .addRetry(this.dynamoDbSdkRetryHandler())
+                    .addCatch(nb.notifyOnTaskFailed, { errors: ['States.ALL'] })
                   .next(nb.pitrEnabledChoice
                     .when(cb.pitrIsEnabled, nb.initializeWorkflowState
                       .when(cb.fullExportStillRunning, nb.notifyOnFullExportRunning
