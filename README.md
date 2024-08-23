@@ -1,13 +1,38 @@
-# Continuous incremental export for your DynamoDB table to S3
+# Guidance for Incremental Data Exports from Amazon DynamoDB to Amazon S3
+
+## Overview
 This workflow allows you to continuously export a DynamoDB table to S3 incrementally every _f_ minutes (which defines the _frequency_). Traditionally exports to S3 were full table snapshots but since the [introduction of incremental exports](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/S3DataExport.HowItWorks.html) in 2023, you can now export your DynamoDB table between two points in time. 
 
-With this repository you can quickly start exporting data from your DynamoDB table with minimal effort. Follow the [Usage](#usage) guide to get started.
+With this repository you can quickly start exporting data from your DynamoDB table with minimal effort. Follow the [Deployment](#deployment-steps-running-the-guidance) guide to get started.
+
+### Cost
+The cost of deploying this solution is impacted by the size of your DynamoDB table, how frequently you run the exports and the workflow, below is a table of a potential cost breakdown structure with some assumptions:
+
+Assumptions
+1. Using the Ohio (us-east-2)
+1. Using S3 Standard storage for the exported data
+1. Run workflow at 15 minute intervals
+
+| AWS service  | Dimensions | Cost [USD] |
+| ----------- | ------------ | ------------ |
+| Amazon DynamoDB PITR | 1GB per month  | $ 0.20 month |
+| Amazon S3 | 5 GB storage, 100 PUT, COPY, POST, LIST requests to S3 Standard | $ 0.12 month |
+| AWS Lambda | ~12 invocations per hour, 128MB memory | $ 0.00 month |
+| AWS Step Functions | ~12 invocations per hour, 25 invocations per workflow | $ 5.38 month |
+| AWS Systems Manager | 5 standard parameters, ~36 API interactions per hour | $ 0.00 month |
+| Amazon SNS | ~520 requests per month, ~520 email notifications | $ 0.00 month |
+| AWS KMS | 1 CMK, ~3000 symmetric requests | $ 1.01 month |
+
+For further experimentation please feel free to use the [AWS Pricing Calculator](https://calculator.aws/#/estimate?id=5761d33c568fc9c3bba5a4ec682212c9b481717e) for this solution.
 
 ## Prerequisites
 1. Install [AWS CDK](https://docs.aws.amazon.com/cdk/v2/guide/getting_started.html)
 1. An existing DynamoDB table with [PITR](https://aws.amazon.com/dynamodb/pitr/) enabled
 
-## Usage
+### Operating System
+Commands below are for `bash` on a MacOS
+
+## Deployment Steps (Running the Guidance)
 1. All you need is a DynamoDB Table with [PITR](https://aws.amazon.com/dynamodb/pitr/) enabled
 1. [Clone](https://github.com/aws-samples/dynamodb-continuous-incremental-exports.git) the repository using `git clone https://github.com/aws-samples/dynamodb-continuous-incremental-exports.git`
 1. Change directory using `cd dynamodb-continuous-incremental-exports`
@@ -43,6 +68,9 @@ With this repository you can quickly start exporting data from your DynamoDB tab
         -c successNotificationEmail=$SUCCESS_EMAIL \
         -c failureNotificationEmail=$FAILURE_EMAIL
     ```
+
+### Deployment validation
+Ensure that the CDK deployed without any errors in the CLI. You should a fully [deployed Step Function](#step-function-view). Verify that the Step Function run without any errors. If you find any errors, refer to the [Troubleshooting](#faq-known-issues-additional-considerations-and-limitations) section.
 
 ### Redeployment
 If you are redeploying the solution and have decided to keep the export data bucket (and prefix) intact then the bucket name (and prefix) will need to be passed into the `cdk synth` and `cdk deploy` steps. This ensures your existing export data bucket (and prefix) are used.
@@ -188,7 +216,7 @@ The solution maintains SSM Parameters to ensure incremental exports work as expe
     * The Lambda Function used by the Step Function
 * **DO NOT** pause or stop the Eventbridge Schedule that triggers the Step Function; use the `workflow-action` parameter instead
 
-### Troubleshooting
+### FAQ, known issues, additional considerations, and limitations
 #### How do I enable PITR for this workflow to work?
 [PITR](https://aws.amazon.com/dynamodb/pitr/) can be enabled via the [AWS Console](https://aws.amazon.com/blogs/aws/new-amazon-dynamodb-continuous-backups-and-point-in-time-recovery-pitr/) or the [CLI](https://awscli.amazonaws.com/v2/documentation/api/latest/reference/dynamodb/update-continuous-backups.html). Note that enabling PITR incurs a cost, please use the [AWS Cost Calculator](https://calculator.aws/#/createCalculator/DynamoDB) to determine the charges based on your table size.
 
@@ -273,3 +301,7 @@ With the flexibility of AWS Step Functions and CDK, fork the repository and feel
 
 ## License
 This library is licensed under the MIT-0 License. See the LICENSE file.
+
+## Authors
+1. [Ruskin Dantra](https://github.com/ruskindantra)
+1. [Jason Hunter](https://github.com/hunterhacker)
