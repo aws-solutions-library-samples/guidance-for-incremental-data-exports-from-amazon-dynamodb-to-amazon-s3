@@ -46,6 +46,7 @@ export class DynamoDbContinuousIncrementalExportsStack extends cdk.Stack {
     this.sourceDataExportBucket = new DataExportBucket(this, 'source-data-export-bucket', {
       account: this.account,
       region: this.region,
+      bucketOwnerAccountId: this.configuration.dataExportBucketOwnerAccountId,
       name: this.configuration.dataExportBucketName,
       sourceDdbTablename: this.configuration.sourceDynamoDbTableName,
       deploymentAlias: this.configuration.deploymentAlias,
@@ -106,8 +107,7 @@ export class DynamoDbContinuousIncrementalExportsStack extends cdk.Stack {
           maximumRetryAttempts: 5,
         },
       },
-      description: `Triggers the step function every ${schedulerTime} minutes`,
-      name: `${this.configuration.deploymentAlias}-incremental-export-schedule`,
+      description: `${this.configuration.deploymentAlias} export schedule, triggers the step function every ${schedulerTime} minutes`,
       state: KeywordConstants.ENABLED
     });
   }
@@ -129,19 +129,23 @@ export class DynamoDbContinuousIncrementalExportsStack extends cdk.Stack {
       masterKey: snsKey
     });
 
-    const successNotificationSub = new sns.Subscription(this, 'ddb-export-notification-success-subsc', {
-      topic: this.ddbExportNotificationTopic,
-      endpoint: this.configuration.successNotificationEmail,
-      protocol: sns.SubscriptionProtocol.EMAIL,
-      filterPolicyWithMessageBody: { status: sns.FilterOrPolicy.filter(sns.SubscriptionFilter.stringFilter({ allowlist: ['SUCCESS'] })) }
-    });
+    if(this.configuration.successNotificationEmail && this.configuration.successNotificationEmail !== "") {
+      const successNotificationSub = new sns.Subscription(this, 'ddb-export-notification-success-subsc', {
+        topic: this.ddbExportNotificationTopic,
+        endpoint: this.configuration.successNotificationEmail,
+        protocol: sns.SubscriptionProtocol.EMAIL,
+        filterPolicyWithMessageBody: { status: sns.FilterOrPolicy.filter(sns.SubscriptionFilter.stringFilter({ allowlist: ['SUCCESS'] })) }
+      });
+    }
 
-    const failureNotificationSub = new sns.Subscription(this, 'ddb-export-notification-failure-subsc', {
-      topic: this.ddbExportNotificationTopic,
-      endpoint: this.configuration.failureNotificationEmail,
-      protocol: sns.SubscriptionProtocol.EMAIL,
-      filterPolicyWithMessageBody: { status: sns.FilterOrPolicy.filter(sns.SubscriptionFilter.stringFilter({ allowlist: ['FAILED'] })) }
-    });
+    if(this.configuration.failureNotificationEmail && this.configuration.failureNotificationEmail !== "") {
+      const failureNotificationSub = new sns.Subscription(this, 'ddb-export-notification-failure-subsc', {
+        topic: this.ddbExportNotificationTopic,
+        endpoint: this.configuration.failureNotificationEmail,
+        protocol: sns.SubscriptionProtocol.EMAIL,
+        filterPolicyWithMessageBody: { status: sns.FilterOrPolicy.filter(sns.SubscriptionFilter.stringFilter({ allowlist: ['FAILED'] })) }
+      });
+    }
 
     return snsKey;
   }
@@ -442,7 +446,9 @@ export class DynamoDbContinuousIncrementalExportsStack extends cdk.Stack {
     const dynamoDB = new ddbSdk.DynamoDB();
   
     try {
-      const response = await dynamoDB.describeTable({ TableName: tableName });
+      const response = await dynamoDB.describeTable({ TableName: tableName }, {
+        requestTimeout: 60000
+      });
       return true; 
     } catch (error) {
       return false;

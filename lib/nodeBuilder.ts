@@ -258,7 +258,8 @@ export class NodeBuilder {
                 'lastExportTime.$': `$.${StepFunctionOutputConstants.EXPORT_TIME_PARAMETER_TO_USE_OUTPUT}.exportTimeParameterToUse`,
                 'incrementalExportWindowSizeInMinutes': this.incrementalExportWindowSizeInMinutes,
                 'tableArn': this.sourceDynamoDbTable.tableArn,
-                'bucket': this.sourceDataExportBucket.bucket.bucketName,
+                'bucketOwner': this.sourceDataExportBucket.bucketOwnerAccountId,
+                'bucket': this.sourceDataExportBucket.bucket,
                 'bucketPrefix': this.sourceDataExportBucket.prefix,
                 'exportFormat': IncrementalExportDefaults.DATA_EXPORT_FORMAT,
                 'exportViewType': ExportViewType[this.exportViewType]
@@ -275,6 +276,7 @@ export class NodeBuilder {
             iamResources: [lastIncrementalExportTimeParameterIamArn],
             parameters: {
                 Name: `/${this.lastIncrementalExportTimeParameterName}`,
+                Description: `Incremental Export table ${this.sourceDynamoDbTable.tableName}`,
                 'Value.$': `$.${StepFunctionOutputConstants.INCREMENTAL_EXPORT_OUTPUT}.ExportDescription.IncrementalExportSpecification.ExportToTime`,
                 'Overwrite': true,
                 'Type': 'String'
@@ -304,7 +306,9 @@ export class NodeBuilder {
             `$.${StepFunctionOutputConstants.DESCRIBE_INCREMENTAL_EXPORT_OUTPUT}.ExportDescription.StartTime`,
             `$.${StepFunctionOutputConstants.DESCRIBE_INCREMENTAL_EXPORT_OUTPUT}.ExportDescription.EndTime`,
             { 'incrementalBlocksBehind.$': `$.${StepFunctionOutputConstants.GET_NEXT_INCREMENTAL_EXPORT_TIME_OUTPUT}.Payload.body.incrementalBlocksBehind` },
-            {'remedy.$': `$.${StepFunctionOutputConstants.GET_NEXT_INCREMENTAL_EXPORT_TIME_OUTPUT}.Payload.body.remedy` });
+            {'remedy.$': `$.${StepFunctionOutputConstants.GET_NEXT_INCREMENTAL_EXPORT_TIME_OUTPUT}.Payload.body.remedy` },
+            `$.${StepFunctionOutputConstants.DESCRIBE_INCREMENTAL_EXPORT_OUTPUT}.ExportDescription.ExportArn`,
+        );
         this.incrementalExportParameterTrue = incrementExportPassNodes.success;
         this.incrementalExportParameterFalse = incrementExportPassNodes.failed;
 
@@ -323,9 +327,10 @@ export class NodeBuilder {
         });
 
         // Refer to: https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/S3DataExport_Requesting.html
+        const exportToS3Path = `${this.sourceDataExportBucket.bucket}/${this.sourceDataExportBucket.prefix}/*`.replace(/\/\//g, '/');
         const exportToS3IamPolicyStatement = new iam.PolicyStatement({
             actions: ['s3:AbortMultipartUpload', 's3:PutObject', 's3:PutObjectAcl'],
-            resources: [this.sourceDataExportBucket.bucket.arnForObjects('*')],
+            resources: [ `arn:aws:s3:::${exportToS3Path}`],
             effect: iam.Effect.ALLOW,
             sid: 'AllowWriteToDestinationBucket'
         });
@@ -333,6 +338,7 @@ export class NodeBuilder {
 
         const executeFullExportParameters = {
             ...exportParametersBase,
+            S3BucketOwner: this.sourceDataExportBucket.bucketOwnerAccountId,
             ExportType: ExportType[ExportType.FULL_EXPORT]
         }
         this.executeFullExport = this.getDynamoDbTask(
@@ -354,6 +360,7 @@ export class NodeBuilder {
             iamResources: [fullExportTimeParameterIamArn],
             parameters: {
                 Name: `/${this.fullExportTimeParameterName}`,
+                Description: `Incremental Export table ${this.sourceDynamoDbTable.tableName}`,
                 'Value.$': `$.${StepFunctionOutputConstants.FULL_EXPORT_OUTPUT}.ExportDescription.ExportTime`,
                 'Overwrite': true,
                 'Type': 'String'
@@ -399,7 +406,9 @@ export class NodeBuilder {
             `$.${StepFunctionOutputConstants.DESCRIBE_FULL_EXPORT_OUTPUT}.ExportDescription.StartTime`,
             `$.${StepFunctionOutputConstants.DESCRIBE_FULL_EXPORT_OUTPUT}.ExportDescription.EndTime`, 
             undefined,
-            {'remedy:': 'Workflow will be triggered again'});
+            {'remedy:': 'Workflow will be triggered again'},
+            `$.${StepFunctionOutputConstants.DESCRIBE_FULL_EXPORT_OUTPUT}.ExportDescription.ExportArn`,
+        );
         this.workflowInitializedParameterTrue = exportPassNodes.success;
         this.workflowInitializedParameterFalse = exportPassNodes.failed;
 
@@ -433,6 +442,7 @@ export class NodeBuilder {
 
         const executeIncrementalExportParameters = {
             ...exportParametersBase,
+            S3BucketOwner: this.sourceDataExportBucket.bucketOwnerAccountId,
             ExportFormat: IncrementalExportDefaults.DATA_EXPORT_FORMAT,
             ExportType: ExportType[ExportType.INCREMENTAL_EXPORT],
             'IncrementalExportSpecification': {
@@ -465,6 +475,7 @@ export class NodeBuilder {
             iamResources: [workflowInitiatedParameterArn],
             parameters: {
                 Name: `/${this.workflowInitiatedParameterName}`,
+                Description: `Incremental Export table ${this.sourceDynamoDbTable.tableName}`,
                 'Value.$': `$.${StepFunctionOutputConstants.WORKFLOW_INITIALIZED_PARAMETER_OUTPUT}.success`,
                 'Overwrite': true,
                 'Type': 'String'
@@ -482,6 +493,7 @@ export class NodeBuilder {
             iamResources: [workflowStateParameterArn],
             parameters: {
                 Name: `/${this.workflowStateParameterName}`,
+                Description: `Incremental Export table ${this.sourceDynamoDbTable.tableName}`,
                 'Value': WorkflowState[WorkflowState.PITR_GAP],
                 'Overwrite': true,
                 'Type': 'String'
@@ -498,6 +510,7 @@ export class NodeBuilder {
             iamResources: [workflowStateParameterArn],
             parameters: {
                 Name: `/${this.workflowStateParameterName}`,
+                Description: `Incremental Export table ${this.sourceDynamoDbTable.tableName}`,
                 'Value': WorkflowState[WorkflowState.NORMAL],
                 'Overwrite': true,
                 'Type': 'String'
@@ -515,6 +528,7 @@ export class NodeBuilder {
             iamResources: [workflowActionParameterArn],
             parameters: {
                 Name: `/${this.workflowActionParameterName}`,
+                Description: `Incremental Export table ${this.sourceDynamoDbTable.tableName}`,
                 'Value': WorkflowAction[WorkflowAction.RUN],
                 'Overwrite': true,
                 'Type': 'String'
@@ -532,6 +546,7 @@ export class NodeBuilder {
             iamResources: [workflowInitiatedParameterArn],
             parameters: {
                 Name: `/${this.workflowInitiatedParameterName}`,
+                Description: `Incremental Export table ${this.sourceDynamoDbTable.tableName}`,
                 'Value': KeywordConstants.NULL_STRING, // we set an empty value to indicate that the worklow has begun but not completed (with success or failure)
                 'Overwrite': true,
                 'Type': 'String'
@@ -665,7 +680,8 @@ export class NodeBuilder {
     }
 
     private getExportPassNodes(id: string, exportType: ExportType, stateName: string, resultPath: string, outputName: string, 
-        exportStartTime: string, exportEndTime: string, startTime: string, endTime: string, incrementalBlocksBehind: any, remedy: any) : { success: sfn.Pass, failed: sfn.Pass } {
+        exportStartTime: string, exportEndTime: string, startTime: string, endTime: string, incrementalBlocksBehind: any, remedy: any,
+        exportArn: string) : { success: sfn.Pass, failed: sfn.Pass } {
         
         const timeParamSuccess = {
             'exportStartTime.$': exportStartTime,
@@ -686,6 +702,10 @@ export class NodeBuilder {
                 snsMessage: {
                     message: `${ExportType[exportType]} export for table \'${this.sourceDynamoDbTable.tableName}\' succeeded`,
                     'executionId.$': '$$.Execution.Id',
+                    sourceDynamoDbTable: this.sourceDynamoDbTable.tableName,
+                    targetBucket: this.sourceDataExportBucket.bucket,
+                    targetBucketPrefix: this.sourceDataExportBucket.prefix,
+                    'exportArn.$': exportArn,
                     exportType: ExportType[exportType],
                     status: KeywordConstants.SNS_SUCCESS,
                     ...timeParamSuccess,
@@ -702,6 +722,10 @@ export class NodeBuilder {
                 snsMessage: {
                     'message.$': `States.Format('${ExportType[exportType]} export for table ${this.sourceDynamoDbTable.tableName} failed because\n{}\n{}', $.${outputName}.ExportDescription.FailureCode, $.${outputName}.ExportDescription.FailureMessage)`,
                     'executionId.$': '$$.Execution.Id',
+                    sourceDynamoDbTable: this.sourceDynamoDbTable.tableName,
+                    targetBucket: this.sourceDataExportBucket.bucket,
+                    targetBucketPrefix: this.sourceDataExportBucket.prefix,
+                    exportArn: exportArn,
                     exportType: ExportType[exportType],
                     status: KeywordConstants.SNS_FAILED,
                     ...timeParamFailed,

@@ -5,6 +5,7 @@ import { ExportFormat } from '../constants/exportFormat';
 
 export interface BucketProps {
   name: string;
+  bucketOwnerAccountId?: string;
   region: string;
   account: string;
   sourceDdbTablename: string;
@@ -15,13 +16,15 @@ export interface BucketProps {
 
 export class DataExportBucket extends Construct {
 
-  bucket: s3.IBucket;
+  bucketOwnerAccountId: string;
+  bucket: string;
   prefix?: string;
   exportFormat: ExportFormat;
 
   constructor(scope: Construct, id: string, props: BucketProps) {
     super(scope, id);
 
+    this.bucketOwnerAccountId = props.bucketOwnerAccountId ?? props.account;
     let bucketName = props.name;
 
     if (!bucketName || bucketName === "") {
@@ -35,7 +38,7 @@ export class DataExportBucket extends Construct {
       });
       this.onlyHttpsRequestsAllowed(serverAccessLogBucket);
       
-      this.bucket = new s3.Bucket(this, `${id}-resource`, {
+      const bucket = new s3.Bucket(this, `${id}-resource`, {
         bucketName: bucketName,
         encryption: s3.BucketEncryption.KMS_MANAGED,
         autoDeleteObjects: false,
@@ -44,17 +47,18 @@ export class DataExportBucket extends Construct {
         
         // more props to be set here as needed
       });
-      this.onlyHttpsRequestsAllowed(this.bucket);
+      this.onlyHttpsRequestsAllowed(bucket);
+      this.bucket = bucket.bucketName;
     }
     else {
-      this.bucket = s3.Bucket.fromBucketName(this, `${id}-resource`, bucketName);
+      this.bucket = bucketName;
     }
 
     this.prefix = props.prefix;
     this.exportFormat = props.exportFormat;
 
     new cdk.CfnOutput(this, `${props.deploymentAlias}-data-export-bucket`, {
-      value: this.bucket.bucketName,
+      value: this.bucket,
       exportName: `${props.deploymentAlias}-data-export-bucket`,
       description: 'Data export bucket'
     });
@@ -91,13 +95,13 @@ export class DataExportBucket extends Construct {
   public getExecuteExportParameters(sourceDynamoDbTableArn: string): any {
     if (!this.hasPrefix()) {
       return {
-          S3Bucket: this.bucket.bucketName,
+          S3Bucket: this.bucket,
           TableArn: sourceDynamoDbTableArn,
           ExportFormat: ExportFormat[this.exportFormat]
       };
     } else {
       return {
-          S3Bucket: this.bucket.bucketName,
+          S3Bucket: this.bucket,
           S3Prefix: this.prefix,
           TableArn: sourceDynamoDbTableArn,
           ExportFormat: ExportFormat[this.exportFormat]
